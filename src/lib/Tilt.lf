@@ -1,0 +1,45 @@
+/**
+ * Library reactors for the IMU on the
+ * <a href="https://www.pololu.com/docs/0J86">Pololu 3pi+ 2040 robot</a>. Note that these reactors
+ * rely on the fact that they are executed in an unthreaded runtime. To adapt them for a threaded
+ * runtime, they will need to use mutual exclusion to ensure that multiple instances of the reactors
+ * are not simultaneously accessing the shared hardware resource.
+ *
+ * @author Abhi Gundrala
+ * @author Edward A. Lee
+ */
+ target C {
+    platform: {
+      name: "rp2040",
+      board: "pololu_3pi_2040_robot"
+    },
+    single-threaded: true,
+  }
+  
+  preamble {=
+    #include <math.h>
+    #define PI 3.14159265358979323846
+  =}
+  
+  reactor Tilt {
+    input x: float
+    input y: float
+    input z: float
+    output pitch: float
+    output roll: float
+    output yaw: float
+
+    reaction(x, y, z) -> pitch, roll{=
+
+        float Ax_out = x->value;
+        float Ay_out = -y->value;
+        float Az_out = -z->value;
+
+        // Calculate tilt angles
+        float theta = atan2(Ax_out, sqrt(Ay_out * Ay_out + Az_out * Az_out)) * (180.0 / PI);
+        float phi = atan2(Ay_out, sqrt(Ax_out * Ax_out + Az_out * Az_out)) * (180.0 / PI);
+
+        lf_set(pitch, theta);
+        lf_set(roll, phi);
+    =}
+  }
