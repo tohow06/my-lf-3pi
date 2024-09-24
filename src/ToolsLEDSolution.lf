@@ -1,0 +1,33 @@
+/**
+ * Blink the default LED on the
+ * <a href="https://www.pololu.com/docs/0J86">Pololu 3pi+ 2040 robot</a>.
+ * @author Abhi Gundrala
+ * @author Edward A. Lee
+ */
+target C {
+  platform: {
+    name: "rp2040",
+    board: "pololu_3pi_2040_robot"
+  },
+  single-threaded: true
+}
+
+import LED from "lib/LED.lf"
+
+preamble {=
+    #include <pico/stdlib.h>
+=}
+
+main reactor {
+  l = new LED();
+  timer t1(0, 500 ms)
+  timer t2(250 ms, 500 ms)
+
+  reaction(t1) -> l.set {=
+    lf_set(l.set, true);
+  =}
+
+  reaction(t2) -> l.set {=
+    lf_set(l.set, false);
+  =}
+}
