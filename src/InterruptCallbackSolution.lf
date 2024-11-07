@@ -1,0 +1,39 @@
+target C {
+    platform: {
+      name: "rp2040",
+      board: "pololu_3pi_2040_robot"
+    },
+    single-threaded: true,
+    keepalive: true
+  }
+  
+preamble {=
+  #include <stdio.h>
+  #include <pico/stdlib.h>
+  #include <hardware/gpio.h>
+  #include <stdint.h>
+  #include <inttypes.h>
+  #define BUTTON_PIN 25
+  static bool led_state = false;
+  
+  static void gpio_callback(uint gpio, uint32_t events) {
+      if (events & GPIO_IRQ_EDGE_FALL) {
+        printf("Button Pressed!, gpio: %u, event: %" PRIu32 "\n", gpio, events);
+      }
+  }
+=}
+
+main reactor {
+  state button_pressed: bool = false
+
+  reaction(startup) {=
+    gpio_init(BUTTON_PIN);
+    gpio_set_dir(BUTTON_PIN, GPIO_IN);
+    gpio_pull_up(BUTTON_PIN);
+
+    gpio_set_irq_enabled_with_callback(
+        BUTTON_PIN, GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, true, &gpio_callback
+    );
+  =}
+}
+  

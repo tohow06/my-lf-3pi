@@ -1,0 +1,98 @@
+/**
+ * Display three dimensions of accelerometer measurements on the LCD display of the
+ * <a href="https://www.pololu.com/docs/0J86">Pololu 3pi+ 2040 robot</a>. To run this program, first
+ * put the robot in BOOTSEL mode (hold button B while resetting). Then the sequence of commands is
+ * something like this:
+ * ```
+ *     $ cd ~/lf-pico
+ *     $ lfc src/AccelerometerDisplay.lf
+ *     ...
+ *     $ picotool load -x bin/AccelerometerDisplay.elf
+ * ```
+
+ *
+ * This compiles the program, loads it into flash memory on the robot, and begins executing it.
+ *
+ * @author Edward A. Lee
+ */
+target C {
+  platform: {
+    name: "rp2040",
+    board: "pololu_3pi_2040_robot"
+  },
+  single-threaded: true,
+  keepalive: true
+}
+
+import Display from "lib/Display.lf"
+
+main reactor {
+  preamble {=
+    #include <stdio.h>
+    #include <pico/stdlib.h>
+    #include <hardware/gpio.h>
+    #include <stdint.h>
+    #include <inttypes.h>
+
+    #define BUTTON_PIN 25
+
+    static void* action;
+    static void gpio_callback(uint gpio, uint32_t events) {
+        if (events & GPIO_IRQ_EDGE_FALL) {
+            printf("IRIRI Button pressed!\n");
+            lf_schedule(action, 0);
+        }
+    }
+  =}
+
+  physical action a
+  d = new Display()
+
+  state count: int = 0
+
+  reaction(startup) -> a {=
+    action = a;
+    gpio_init(BUTTON_PIN);
+    gpio_set_dir(BUTTON_PIN, GPIO_IN);
+    gpio_pull_up(BUTTON_PIN);
+    gpio_set_irq_enabled_with_callback(BUTTON_PIN, GPIO_IRQ_EDGE_FALL, true, &gpio_callback);
+
+    printf("System initialized. Press the button to trigger events.\n");
+  =}
+
+  initial mode One {
+    timer t(0, 500 ms)
+    reaction(t) -> d.line0, d.line2 {=
+      lf_set(d.line0, "Mode: One");
+
+      self->count = self->count + 1;
+
+      static char buf[17];
+      snprintf(buf, 17, "Count: %d", self->count);
+      lf_set(d.line2, buf);
+    =}
+
+    reaction(a) -> reset(Two) {=
+      printf("Button pressed in mode one!\n");
+      lf_set_mode(Two);
+    =}
+  }
+
+  mode Two {
+    timer t1(0, 1000 ms)
+    reaction(t1) -> d.line0, d.line2 {=
+      lf_set(d.line0, "Mode: Two");
+
+      self->count = self->count - 1;
+
+      static char buf[17];
+      snprintf(buf, 17, "Count: %d", self->count);
+      lf_set(d.line2, buf);
+    =}
+
+    reaction(a) -> reset(One) {=
+      printf("Button pressed in mode two!\n");
+      lf_set_mode(One);
+    =}
+  }
+}
