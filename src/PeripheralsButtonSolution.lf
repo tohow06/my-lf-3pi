@@ -1,0 +1,58 @@
+/**
+ * Blink the default LED on the 
+ * <a href="https://www.pololu.com/docs/0J86">Pololu 3pi+ 2040 robot</a> and
+ * display button state on the robot's LCD.
+ * @author Abhi Gundrala
+ * @author Edward A. Lee
+ */
+ target C {
+    platform: {
+        name: "rp2040",
+        board: "pololu_3pi_2040_robot"
+    },
+    single-threaded: true
+}
+
+import Display from "lib/Display.lf"
+
+preamble {=
+    #include <stdio.h>
+    #include <pico/stdlib.h>
+    #include <hardware/gpio.h>
+    
+    #define SIO_BASE 0xd0000000
+    #define GPIO_OUT_SET_REG (*(volatile uint32_t*)(SIO_BASE + 0x14))  
+    #define GPIO_OUT_CLR_REG (*(volatile uint32_t*)(SIO_BASE + 0x18))  
+    #define LED_PIN PICO_DEFAULT_LED_PIN
+=}
+
+main reactor {
+    timer t_button(0, 250 ms) // Timer controlling button state check
+    state led_on: bool = false
+    state button_pressed: bool = false
+    d = new Display()  // Initialize the display module
+
+    // Initialize LEDcc
+    reaction(startup) {=
+        // Initialize the LED
+        gpio_init(LED_PIN);
+        gpio_set_dir(LED_PIN, GPIO_IN);
+    =}
+
+
+    // Check the button state every 250ms and display it on the LCD
+    reaction(t_button) -> d.line0 {=
+        // Read the state of GPIO 25 to determine if the button is pressed
+        self->button_pressed = !gpio_get(LED_PIN); // Set Button pressed if GPIO state is low (0)
+
+        // Display the button state on the LCD
+        static char buf0[17];  // Define a buffer to store the display string
+
+        if (self->button_pressed) {
+            snprintf(buf0, 17, "Button Pressed");
+        } else {
+            snprintf(buf0, 17, "Button Released");
+        }
+        lf_set(d.line0, buf0);  // Display the button state on the first line of the LCD
+    =}
+}
