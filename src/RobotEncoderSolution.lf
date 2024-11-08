@@ -1,0 +1,63 @@
+/**
+ * Display encoder measurements from the wheels of the
+ * <a href="https://www.pololu.com/docs/0J86">Pololu 3pi+ 2040 robot</a>.
+ * @author Abhi Gundrala
+ * @author Edward A. Lee
+ */
+target C {
+  platform: {
+    name: "rp2040",
+    board: "pololu_3pi_2040_robot"
+  },
+  single-threaded: true
+}
+
+import Display from "lib/Display.lf"
+import Encoders from "lib/Encoders.lf"
+
+reactor AngleToDistance(diameter: float = 31.75) {
+  preamble {=
+    #include <math.h>
+  =}
+  input left: int32_t
+  input right: int32_t
+  output left_dist: float
+  output right_dist: float
+
+  reaction(left) -> left_dist {=
+    lf_set(left_dist, left->value * self->diameter * M_PI / 360);
+  =}
+
+  reaction(right) -> right_dist {=
+    lf_set(right_dist, right->value * self->diameter * M_PI / 360);
+  =}
+}
+
+main reactor {
+  display = new Display()
+  encoder = new Encoders()
+  atd = new AngleToDistance()
+  encoder.left -> atd.left
+  encoder.right -> atd.right
+  timer t(0, 100 ms)
+
+  reaction(t) -> encoder.trigger {=
+    lf_set(encoder.trigger, true);
+  =}
+
+  reaction(startup) -> display.line0 {=
+    lf_set(display.line0, "ENCODERS:");
+  =}
+
+  reaction(atd.left_dist) -> display.line1 {=
+    static char buf[17];
+    snprintf(buf, 17, "L: %.2f mm", atd.left_dist->value);
+    lf_set(display.line1, buf);
+  =}
+
+  reaction(atd.right_dist) -> display.line2 {=
+    static char buf[17];
+    snprintf(buf, 17, "R: %.2f mm", atd.right_dist->value);
+    lf_set(display.line2, buf);
+  =}
+}

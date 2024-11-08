@@ -1,0 +1,108 @@
+/**
+ * Template for robot driving lab exercises. This template now includes a TURNING mode that switches
+ * between STOPPED, DRIVING, and TURNING modes.
+ */
+target C {
+  platform: {
+    name: "rp2040",
+    board: "pololu_3pi_2040_robot"
+  },
+  single-threaded: true
+}
+
+import Display from "lib/Display.lf"
+import Motors from "lib/Motors.lf"
+import Encoders from "lib/Encoders.lf"
+import AngleToDistance from "lib/AngleToDistance.lf"
+import GyroAngle from "lib/IMU.lf"
+
+reactor Robot {
+  input left_dist: float
+  input right_dist: float
+  input z: float
+  output notify: string  // Notify of mode change.
+  output left_power: float
+  output right_power: float
+  state dist: float
+  state turnCount: int = 0
+  logical action wait
+
+  reaction(startup) -> notify {=
+    lf_set(notify, "INIT");
+  =}
+
+  initial mode STOPPED {
+    reaction(startup) -> wait {=
+      lf_schedule(wait, SEC(2));
+    =}
+
+    reaction(wait) -> reset(DRIVING), notify, left_power, right_power {=
+      if (self->turnCount != 3) {
+        lf_set_mode(DRIVING);
+        lf_set(notify, "DRIVING");
+        lf_set(left_power, 0.1);
+        lf_set(right_power, 0.1);
+      }
+    =}
+  }
+
+  mode DRIVING {
+    reaction(left_dist) -> reset(TURNING), reset(STOPPED), notify, left_power, right_power {=
+      float moveDist = left_dist->value - self->dist;
+      if (moveDist >= 500) {
+        if (self->turnCount == 3) {
+          lf_set_mode(STOPPED);
+          lf_set(notify, "STOPPED");
+          lf_set(left_power, 0.0);
+          lf_set(right_power, 0.0);
+        }else{
+          lf_set_mode(TURNING);
+          lf_set(notify, "TURNING");
+          lf_set(left_power, -0.1);
+          lf_set(right_power, 0.1);
+          self->dist = left_dist->value;
+        }
+      }
+    =}
+  }
+
+  mode TURNING {
+    reaction(left_dist) {=
+      self->dist = left_dist->value;
+    =}
+
+    reaction(z) -> reset(DRIVING), notify, left_power, right_power {=
+      if (z->value >= 88*(self->turnCount+1)) {
+        lf_set_mode(DRIVING);
+        lf_set(notify, "DRIVING");
+        lf_set(left_power, 0.1);
+        lf_set(right_power, 0.1);
+        self->turnCount = self->turnCount + 1;
+      }
+    =}
+  }
+}
+
+main reactor {
+  timer t(0, 50 ms)
+  robot = new Robot()
+  display = new Display()
+  motors = new Motors()
+  encoders = new Encoders()
+  atd = new AngleToDistance()
+  gyro = new GyroAngle()
+
+  robot.notify -> display.line0
+  robot.left_power -> motors.left_power
+  robot.right_power -> motors.right_power
+  encoders.left -> atd.left
+  encoders.right -> atd.right
+  atd.left_dist -> robot.left_dist
+  atd.right_dist -> robot.right_dist
+  gyro.z -> robot.z
+
+  reaction(t) -> encoders.trigger, gyro.trigger {=
+    lf_set(encoders.trigger, true);
+    lf_set(gyro.trigger, true);
+  =}
+}

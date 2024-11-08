@@ -1,0 +1,224 @@
+/**
+ * Template for robot driving lab exercises. This template now includes a TURNING mode that switches
+ * between STOPPED, DRIVING, and TURNING modes.
+ */
+target C {
+  platform: {
+    name: "rp2040",
+    board: "pololu_3pi_2040_robot"
+  },
+  single-threaded: true
+}
+
+import Display from "lib/Display.lf"
+import Motors from "lib/Motors.lf"
+import Encoders from "lib/Encoders.lf"
+import AngleToDistance from "lib/AngleToDistance.lf"
+import GyroAngle from "lib/IMU.lf"
+import Bump from "lib/Bump.lf"
+
+reactor Robot {
+  input left_dist: float
+  input right_dist: float
+  input z: float
+  input l_bump: bool
+  input r_bump: bool
+  output notify: string
+  output notify2: string  // Notify of mode change.
+  output left_power: float
+  output right_power: float
+  logical action wait
+
+  state dist: float
+  state head: float
+  state squareStep: int = 0
+  state obsCount: int = 0
+  state avoStep: int = 0
+
+  reaction(startup) -> notify {=
+    lf_set(notify, "INIT");
+  =}
+
+  reaction(z) -> notify2 {=
+    static char buf[17];
+    snprintf(buf, 17, "z: %.1f", z->value);
+    lf_set(notify2, buf);
+  =}
+
+  initial mode STOPPED {
+    reaction(startup) -> wait {=
+      lf_schedule(wait, SEC(2));
+    =}
+
+    reaction(wait) -> reset(DRIVING), notify, left_power, right_power {=
+      if (self->squareStep != 3) {
+        lf_set_mode(DRIVING);
+        lf_set(notify, "DRIVING");
+        lf_set(left_power, 0.2);
+        lf_set(right_power, 0.2);
+      }
+    =}
+  }
+
+  mode DRIVING {
+    reaction(z) {=
+      self->head = z->value;
+    =}
+
+    reaction(left_dist) -> reset(TURNING), reset(STOPPED), notify, left_power, right_power {=
+      float moveDist = left_dist->value - self->dist;
+      if (moveDist >= 500) {
+        if (self->squareStep == 3) {
+          lf_set_mode(STOPPED);
+          lf_set(notify, "STOPPED");
+          lf_set(left_power, 0.0);
+          lf_set(right_power, 0.0);
+        }else{
+          lf_set_mode(TURNING);
+          lf_set(notify, "TURNING");
+          lf_set(left_power, -0.1);
+          lf_set(right_power, 0.1);
+        }
+        self->dist = left_dist->value;
+      }
+    =}
+
+    reaction(l_bump, r_bump) -> reset(AVOID), notify, left_power, right_power, wait {=
+      lf_set_mode(AVOID);
+      lf_set(notify, "AVOID");
+      lf_set(left_power, -0.1);
+      lf_set(right_power, -0.1);
+      lf_schedule(wait, SEC(0.8));
+      self->obsCount = self->obsCount + 1;
+    =}
+  }
+
+  mode TURNING {
+    reaction(left_dist) {=
+      self->dist = left_dist->value;
+    =}
+
+    reaction(z) -> reset(DRIVING), notify, left_power, right_power {=
+      float turnAngle = z->value - self->head;
+      if (turnAngle >= 60) {
+        lf_set_mode(DRIVING);
+        lf_set(notify, "DRIVING");
+        lf_set(left_power, 0.2);
+        lf_set(right_power, 0.2);
+        self->head = z->value;
+        self->squareStep = self->squareStep + 1;
+        self->obsCount = 0;
+      }
+    =}
+  }
+
+  mode AVOID {
+    reaction(z) {=
+      self->head = z->value;
+    =}
+
+    reaction(wait) -> reset(STOPPED), reset(AVOID_TURN), notify, left_power, right_power {=
+      if (self->obsCount < 2) {
+        lf_set_mode(STOPPED);
+        lf_set(notify, "STOPPED");
+        lf_set(left_power, 0);
+        lf_set(right_power, 0);
+        lf_schedule(wait, SEC(2));
+      }else{
+        lf_set_mode(AVOID_TURN);
+        lf_set(notify, "AVOID_TURN");
+        lf_set(left_power, -0.1);
+        lf_set(right_power, 0.1);
+      }
+    =}
+  }
+
+  mode AVOID_TURN {
+    reaction(left_dist){=
+      self->dist = left_dist->value;
+    =}
+    
+    reaction(z) -> reset(AVOID_FORWARD), reset(DRIVING), notify, left_power, right_power {=
+      float turnAngle = z->value - self->head;
+      if (self->avoStep == 0){
+        if (turnAngle >= 45) {
+          lf_set_mode(AVOID_FORWARD);
+          lf_set(notify, "AVOID_FORWARD_0");
+          lf_set(left_power, 0.1);
+          lf_set(right_power, 0.1);
+          self->avoStep = self->avoStep + 1;
+          self->head = z->value;
+        }
+      }else if(self->avoStep == 1){
+        if (turnAngle <= -90) {
+          lf_set_mode(AVOID_FORWARD);
+          lf_set(notify, "AVOID_FORWARD_1");
+          lf_set(left_power, 0.1);
+          lf_set(right_power, 0.1);
+          self->avoStep = self->avoStep + 1;
+          self->head = z->value;
+        }
+      }else if(self->avoStep == 2){
+        if (turnAngle >= 35) {
+          lf_set_mode(DRIVING);
+          lf_set(notify, "DRIVING");
+          lf_set(left_power, 0.2);
+          lf_set(right_power, 0.2);
+          self->avoStep = 0;
+          self->head = z->value;
+        }
+      }
+    =}
+  }
+
+  mode AVOID_FORWARD {
+    reaction(z) {=
+      self->head = z->value;
+    =}
+
+    reaction(left_dist) -> reset(AVOID_TURN), notify, left_power, right_power {=
+      float moveDist = left_dist->value - self->dist;
+      if (moveDist >= 250) {
+        self->dist = left_dist->value;
+        lf_set_mode(AVOID_TURN);
+        if (self-> avoStep == 1){
+          lf_set(left_power, 0.1);
+          lf_set(right_power, -0.1);
+          lf_set(notify, "AVOID_TURN_1");
+        }else if (self->avoStep == 2){
+          lf_set(left_power, -0.1);
+          lf_set(right_power, 0.1);
+          lf_set(notify, "AVOID_TURN_2");
+        }
+      }
+    =}
+  }
+}
+
+main reactor {
+  timer t(0, 100 ms)
+  robot = new Robot()
+  display = new Display()
+  motors = new Motors()
+  encoders = new Encoders()
+  atd = new AngleToDistance()
+  gyro = new GyroAngle()
+  bump = new Bump()
+
+  robot.notify -> display.line0
+  robot.left_power -> motors.left_power
+  robot.right_power -> motors.right_power
+  robot.notify2 -> display.line2
+  encoders.left -> atd.left
+  encoders.right -> atd.right
+  atd.left_dist -> robot.left_dist
+  atd.right_dist -> robot.right_dist
+  gyro.z -> robot.z
+  bump.left -> robot.l_bump
+  bump.right -> robot.r_bump
+
+  reaction(t) -> encoders.trigger, gyro.trigger {=
+    lf_set(encoders.trigger, true);
+    lf_set(gyro.trigger, true);
+  =}
+}
