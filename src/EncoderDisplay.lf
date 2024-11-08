@@ -19,7 +19,7 @@ main reactor {
   display = new Display()
   encoder = new Encoders()
 
-  timer t(0, 1 s)
+  timer t(0, 100 ms)
 
   reaction(t) -> encoder.trigger {=
     lf_set(encoder.trigger, true);
