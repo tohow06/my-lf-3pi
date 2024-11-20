@@ -1,0 +1,197 @@
+/**
+ * Display the outputs from the line sensors on the
+ * <a href="https://www.pololu.com/docs/0J86">Pololu 3pi+ 2040 robot</a>. This program spends the
+ * first 10 seconds in calibration mode, during which you should move the robot over the light and
+ * dark areas that you would like it to detect. It then switches into measurement mode and displays
+ * the measured reflectance of the five IR sensors.
+ *
+ * @author Abhi Gundrala
+ * @author Edward A. Lee
+ */
+target C {
+  platform: {
+    name: "rp2040",
+    board: "pololu_3pi_2040_robot"
+  },
+  single-threaded: true
+}
+
+import Line from "lib/Line.lf"
+import Display from "lib/Display.lf"
+import MotorsWithFeedback from "lib/MotorsWithFeedback.lf"
+import GyroAngle from "lib/IMU.lf"
+import Encoders from "lib/Encoders.lf"
+
+reactor Robot {
+  input dir: int
+  input z: float
+  input drive: bool
+  output left_speed: float
+  output right_speed: float
+  logical action wait
+
+  state cliffDir: int = 0
+  state SPEED: float = 0.2  // meters per second
+  state climb: bool = true
+  state P: float = 0.001
+  state angle: float = 0
+
+  initial mode STOPPED {
+    reaction(drive) -> reset(DRIVING), left_speed, right_speed {=
+      if (drive->value) {
+        lf_set_mode(DRIVING);
+        lf_set(left_speed, self->SPEED);
+        lf_set(right_speed, self->SPEED);
+      }
+    =}
+  }
+
+  mode DRIVING {
+    reaction(dir) -> reset(BACKING), left_speed, right_speed, wait {=
+      static float err = 0;
+      if (dir-> value == 5){
+        lf_set_mode(TURNBACK);
+        lf_set(left_speed, -self->SPEED);
+        lf_set(right_speed, self->SPEED);
+        self->climb = false;
+      } else if (dir->value != 0) {
+        lf_set_mode(BACKING);
+        lf_set(left_speed, -self->SPEED);
+        lf_set(right_speed, -self->SPEED);
+        lf_schedule(wait, SEC(1));
+        self->cliffDir = dir->value;
+      }else{
+        if (self->climb){
+          err = self->angle - 0;
+          lf_set(left_speed, self->SPEED + err * self->P);
+          lf_set(right_speed, self->SPEED - err * self->P);
+        }else if (self->climb == false){
+          err = self->angle - 180;
+          lf_set(left_speed, self->SPEED + err * self->P);
+          lf_set(right_speed, self->SPEED - err * self->P);
+        }
+      }
+    =}
+
+    reaction(z){=
+      self->angle = z->value;
+    =}
+  }
+
+  mode TURNBACK {
+    reaction(z) -> reset(DRIVING), left_speed, right_speed {=
+      self->angle = z->value;
+      if (self->angle >= 180){
+        lf_set_mode(DRIVING);
+        lf_set(left_speed, self->SPEED);
+        lf_set(right_speed, self->SPEED);
+      }
+    =}
+  }
+
+  mode TURNING {
+    reaction(wait) -> reset(DRIVING), left_speed, right_speed {=
+      lf_set_mode(DRIVING);
+            lf_set(left_speed, self->SPEED);
+            lf_set(right_speed, self->SPEED);
+    =}
+  }
+
+  mode BACKING {
+    reaction(wait) -> reset(TURNING), wait, left_speed, right_speed {=
+      lf_set_mode(TURNING);
+      lf_schedule(wait, SEC(0.2));
+
+      if (self->cliffDir == 1){
+        lf_set(left_speed, self->SPEED);
+        lf_set(right_speed, -self->SPEED);
+      }else if (self->cliffDir == 2){
+        // do nothing
+      }else if (self->cliffDir == 3){
+        lf_set(left_speed, -self->SPEED);
+        lf_set(right_speed, self->SPEED);
+      }
+    =}
+  }
+}
+
+main reactor(calibration_time: time = 10 s, sample_period: time = 50 ms) {
+  line = new Line()
+  disp = new Display()
+  robot = new Robot()
+  gyro = new GyroAngle()
+  motors = new MotorsWithFeedback()
+  encoders = new Encoders()
+
+  timer t(0, sample_period)
+  timer seconds(0, 1 s)  // Timer used to display seconds.
+  timer end_calibration(calibration_time)
+  state count: int = 0
+  state dir: int = 0
+  state endCali: bool = false
+
+  gyro.z -> robot.z
+  robot.left_speed -> motors.left_speed
+  robot.right_speed -> motors.right_speed
+  encoders.left -> motors.left
+  encoders.right -> motors.right
+
+  reaction(startup) -> disp.line0, disp.line1, disp.line2 {=
+    lf_set(disp.line0, "CALIBRATING");
+    lf_set(disp.line1, "Roll robot over");
+    lf_set(disp.line2, "light and dark.");
+  =}
+
+  reaction(seconds) -> disp.line3 {=
+  static char buf[17];
+  snprintf(buf, 17, "time:%8d s", self->count++);
+  lf_set(disp.line3, buf);
+  =}
+
+  reaction(end_calibration) -> line.calibrate, robot.drive {=
+    lf_set(line.calibrate, false);
+    lf_set(robot.drive, true);
+    self->endCali = true;
+  =}
+
+  reaction(t) -> line.trigger, gyro.trigger, encoders.trigger {=
+    lf_set(line.trigger, true);
+    lf_set(gyro.trigger, true);
+    lf_set(encoders.trigger, true);
+  =}
+
+  reaction(line.reflect) -> disp.line0, disp.line1, disp.line2, robot.dir {=
+    static char buf0[17];
+    static char buf1[17];
+    static char buf2[17];
+    const int threshold = 800;
+
+    lf_set(disp.line0, "");
+    lf_set(disp.line1, "");
+    lf_set(disp.line2, "");
+
+    if (line.reflect->value[1] >= threshold && line.reflect->value[2] >= threshold && line.reflect->value[3] >= threshold){
+      lf_set(disp.line0, "END,TURNING!!!");
+      lf_set(robot.dir, 5);
+    }else if (line.reflect->value[0] >= threshold || line.reflect->value[1] >= threshold) {
+      lf_set(disp.line0, "Left detected!");
+      lf_set(robot.dir, 1);
+    }else if (line.reflect->value[3] >= threshold || line.reflect->value[4] >= threshold) {
+      lf_set(disp.line1, "Right detected!");
+      lf_set(robot.dir, 3);
+    }else if (line.reflect->value[1] >= threshold || line.reflect->value[2] >= threshold || line.reflect->value[3] >= threshold) {
+      lf_set(disp.line2, "Center detected!");
+      lf_set(robot.dir, 2);
+    }else{
+      lf_set(robot.dir, 0);
+    }
+  =}
+
+  reaction(gyro.z) -> disp.line3 {=
+    static char buf[17]; 
+    if (self->endCali){
+      snprintf(buf, 17, "z:%8.2f", gyro.z->value);
+      lf_set(disp.line3, buf);
+    }
+  =}
+}
